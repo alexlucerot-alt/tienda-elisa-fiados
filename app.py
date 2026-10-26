@@ -4,16 +4,71 @@ from datetime import datetime
 import io
 from sqlalchemy import create_engine, text
 import sqlalchemy
+import json
+from openai import OpenAI
+import streamlit as st
+from streamlit_mic_recorder import speech_to_text
+import json
+import streamlit as st
+import google.generativeai as genai
+
 
 # 1. CONEXIÓN A LA BASE DE DATOS EN LA NUBE (Supabase)
 # Reemplaza TU_CONTRASEÑA_AQUI con tu contraseña real
-DB_URL = "postgresql+psycopg2://postgres.thwypnuvywoewzgdklcl:TIENDAELISA2526@aws-0-us-east-2.pooler.supabase.com:6543/postgres"
+#DB_URL = "postgresql+psycopg2://postgres.thwypnuvywoewzgdklcl:TIENDAELISA2526@aws-0-us-east-2.pooler.supabase.com:6543/postgres"
+DB_URL = "postgresql+psycopg2://postgres:TIENDAELISA2526@db.thwypnuvywoewzgdklcl.supabase.co:5432/postgres"
+
 
 @st.cache_resource
 def init_connection():
     return create_engine(DB_URL)
 
 engine = init_connection()
+
+
+
+
+# Conectar de forma invisible usando los secretos de Streamlit
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+
+def procesar_dictado(texto):
+    prompt = f"""
+    Extrae la información del texto: "{texto}".
+    Devuelve estrictamente un formato JSON con las siguientes claves exactas:
+    "cliente" (nombre), "tipo" ("Cargo" o "Abono"), "detalle" (productos o motivo), "monto" (número).
+    No incluyas texto adicional, solo el JSON.
+    """
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    response = model.generate_content(prompt)
+    
+    # Limpiar posibles etiquetas Markdown generadas por la IA
+    texto_json = response.text.strip().replace('```json', '').replace('```', '')
+    return json.loads(texto_json)
+
+
+
+st.subheader("🎙️ Dictado por voz")
+texto_dictado = speech_to_text(language='es', use_container_width=True, just_once=True, key='dictado')
+
+if texto_dictado:
+    st.write(f"**Escuchado:** {texto_dictado}")
+    
+    # Procesar el texto con la IA
+    datos = procesar_dictado(texto_dictado)
+    st.json(datos)
+    
+    # Buscar el ID del cliente en el DataFrame actual[cite: 1]
+    id_c = int(df_clientes.loc[df_clientes['nombre'].str.lower() == datos['cliente'].lower(), 'id_cliente'].values[0])
+    fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")[cite: 1]
+    
+    # Insertar en Supabase[cite: 1]
+    with engine.begin() as conn:[cite: 1]
+        conn.execute(text("""
+            INSERT INTO movimientos (id_cliente, fecha, tipo, detalle, monto) 
+            VALUES (:id_c, :fecha, :tipo, :detalle, :monto)
+        """), {"id_c": id_c, "fecha": fecha_actual, "tipo": datos['tipo'], "detalle": datos['detalle'], "monto": datos['monto']})[cite: 1]
+        
+    st.success(f"✅ {datos['tipo']} de S/ {datos['monto']} registrado a {datos['cliente']}.")
 
 # 2. INTERFAZ WEB CON STREAMLIT
 st.set_page_config(page_title="Gestión de Cuentas", page_icon="📓", layout="centered")
