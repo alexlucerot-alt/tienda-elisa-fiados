@@ -12,7 +12,8 @@ import google.generativeai as genai
 st.set_page_config(page_title="Gestión de Cuentas", page_icon="📓", layout="centered")
 
 # 1. CONEXIÓN A LA BASE DE DATOS EN LA NUBE (Supabase)
-DB_URL = "postgresql+psycopg2://postgres:TIENDAELISA2526@db.thwypnuvywoewzgdklcl.supabase.co:5432/postgres"
+#DB_URL = "postgresql+psycopg2://postgres:TIENDAELISA2526@db.thwypnuvywoewzgdklcl.supabase.co:5432/postgres"
+DB_URL = "postgresql+psycopg2://postgres.thwypnuvywoewzgdklcl:TIENDAELISA2526@aws-0-us-east-2.pooler.supabase.com:6543/postgres"
 
 @st.cache_resource
 def init_connection():
