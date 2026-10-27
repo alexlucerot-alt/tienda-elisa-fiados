@@ -40,7 +40,7 @@ def procesar_dictado(texto):
     2. Si dice "agregar", "llevo", "compró", el tipo debe ser "Cargo".
     3. Si dice "dejó", "pagó", "abonó", el tipo debe ser "Abono".
     """
-    model = genai.GenerativeModel('gemini-2.0-flash')
+    model = genai.GenerativeModel('gemini-3.8-flash')
     
     # Usamos response_mime_type para forzar a Gemini a devolver JSON puro sin marcas de markdown
     response = model.generate_content(
