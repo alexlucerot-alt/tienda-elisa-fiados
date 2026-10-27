@@ -22,32 +22,33 @@ def init_connection():
 engine = init_connection()
 
 
+
 # 2. CONFIGURACIÓN DE GOOGLE GEMINI
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 def procesar_dictado(texto):
     prompt = f"""
-    Extrae la información del siguiente texto dictado: "{texto}".
+    Extrae la información del siguiente texto dictado en una tienda: "{texto}".
     
-    Devuelve estrictamente un objeto JSON con las siguientes claves:
-    - "cliente": Nombre del cliente (ejemplo: "Pedro").
-    - "tipo": "Cargo" (si lleva/compra productos) o "Abono" (si paga o deja dinero/adelanto).
-    - "detalle": Productos o motivo (ejemplo: "1 sol de pan").
-    - "monto": Número decimal/entero del dinero total (ejemplo: 1.0).
+    Devuelve estrictamente un objeto JSON con las siguientes claves exactas:
+    - "cliente": Nombre del cliente (ejemplo: "Pedro")
+    - "tipo": "Cargo" (si lleva/compra fiado) o "Abono" (si paga/deja dinero)
+    - "detalle": Productos o motivo (ejemplo: "1 sol de palta")
+    - "monto": Valor numérico (ejemplo: 1.0)
 
-    REGLAS IMPORTANTES:
-    1. Si en el texto dicen números en palabras (ej: "un sol", "dos soles", "cinco soles"), conviértelo estrictamente a número en "monto" (ej: 1, 2, 5).
-    2. Si dice "agregar", "llevo", "compró", el tipo debe ser "Cargo".
-    3. Si dice "dejó", "pagó", "abonó", el tipo debe ser "Abono".
+    Reglas:
+    1. Si dicen montos en palabras como "un sol", "dos soles", conviértelos a números (1.0, 2.0).
+    2. Devuelve únicamente el JSON sin texto o explicaciones adicionales.
     """
     model = genai.GenerativeModel('gemini-3.8-flash')
+    response = model.generate_content(prompt)
     
-    # Usamos response_mime_type para forzar a Gemini a devolver JSON puro sin marcas de markdown
-    response = model.generate_content(
-        prompt,
-        generation_config={"response_mime_type": "application/json"}
-    )
-    return json.loads(response.text)
+    # Limpieza de comillas o formato Markdown en la respuesta
+    texto_json = response.text.strip().replace('```json', '').replace('```', '').strip()
+    return json.loads(texto_json)
+    #model = genai.GenerativeModel('gemini-3.8-flash')
+    
+    
 
 # 3. INTERFAZ WEB CON STREAMLIT
 st.title("📓 Cuaderno Digital de Fiados")
@@ -63,41 +64,46 @@ texto_dictado = speech_to_text(language='es', use_container_width=True, just_onc
 if texto_dictado:
     st.write(f"**Escuchado:** {texto_dictado}")
     
-    try:
-        # Procesar el texto con la IA
-        datos = procesar_dictado(texto_dictado)
-        
-        # Extraer variables asegurando tipos correctos
-        cliente_nombre = str(datos['cliente']).strip().lower()
-        monto_num = float(datos['monto'])
-        tipo_mov = datos['tipo']
-        detalle_prod = datos['detalle']
-        
-        # Buscar el ID del cliente (coincidencia sin importar mayúsculas/minúsculas)
-        if cliente_nombre in df_clientes['nombre'].str.lower().values:
-            id_c = int(df_clientes.loc[df_clientes['nombre'].str.lower() == cliente_nombre, 'id_cliente'].values[0])
-            fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Muestra una animación mientras Gemini procesa el audio
+    with st.spinner("🤖 Procesando audio con Inteligencia Artificial..."):
+        try:
+            # 1. Procesar el dictado con Gemini
+            datos = procesar_dictado(texto_dictado)
             
-            # Insertar en Supabase
-            with engine.begin() as conn:
-                conn.execute(text("""
-                    INSERT INTO movimientos (id_cliente, fecha, tipo, detalle, monto) 
-                    VALUES (:id_c, :fecha, :tipo, :detalle, :monto)
-                """), {
-                    "id_c": id_c, 
-                    "fecha": fecha_actual, 
-                    "tipo": tipo_mov, 
-                    "detalle": detalle_prod, 
-                    "monto": monto_num
-                })
+            cliente_nombre = str(datos.get('cliente', '')).strip()
+            monto_num = float(datos.get('monto', 0))
+            tipo_mov = datos.get('tipo', 'Cargo')
+            detalle_prod = datos.get('detalle', '')
+
+            # 2. Volver a consultar la base de datos para asegurar que tenemos los clientes actualizados
+            df_clientes = pd.read_sql_query("SELECT * FROM clientes", engine)
+            
+            # 3. Buscar coincidencia del cliente
+            coincidencias = df_clientes[df_clientes['nombre'].str.lower() == cliente_nombre.lower()]
+            
+            if not coincidencias.empty:
+                id_c = int(coincidencias['id_cliente'].values[0])
+                fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
-            st.success(f"✅ {tipo_mov} de S/ {monto_num:.2f} registrado a {datos['cliente']}.")
-        else:
-            st.error(f"⚠️ No se encontró al cliente '{datos['cliente']}'. Ve a la pestaña '👤 Cliente' para agregarlo.")
-            
-    except Exception as e:
-        # Imprime el error exacto para saber la causa en caso vuelva a fallar
-        st.error(f"⚠️ Error al procesar el dictado: {e}")
+                # 4. Insertar movimiento en Supabase
+                with engine.begin() as conn:
+                    conn.execute(text("""
+                        INSERT INTO movimientos (id_cliente, fecha, tipo, detalle, monto) 
+                        VALUES (:id_c, :fecha, :tipo, :detalle, :monto)
+                    """), {
+                        "id_c": id_c, 
+                        "fecha": fecha_actual, 
+                        "tipo": tipo_mov, 
+                        "detalle": detalle_prod, 
+                        "monto": monto_num
+                    })
+                    
+                st.success(f"✅ {tipo_mov} de S/ {monto_num:.2f} registrado para '{cliente_nombre}' ({detalle_prod}).")
+            else:
+                st.warning(f"⚠️ El cliente **'{cliente_nombre}'** no existe en la base de datos. Agrégalo en la pestaña **'👤 Cliente'** primero.")
+                
+        except Exception as e:
+            st.error(f"⚠️ Ocurrió un error al procesar el dictado: {e}")
 
 # --- PESTAÑAS DE LA APLICACIÓN ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 Venta", "💵 Pago", "💰 Cuentas", "📄 Detalle/Excel", "👤 Cliente"])
