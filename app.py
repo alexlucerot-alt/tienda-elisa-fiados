@@ -21,21 +21,33 @@ def init_connection():
 
 engine = init_connection()
 
+
 # 2. CONFIGURACIÓN DE GOOGLE GEMINI
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 def procesar_dictado(texto):
     prompt = f"""
-    Extrae la información del texto: "{texto}".
-    Devuelve estrictamente un formato JSON con las siguientes claves exactas:
-    "cliente" (nombre), "tipo" ("Cargo" o "Abono"), "detalle" (productos o motivo), "monto" (número).
-    No incluyas texto adicional, solo el JSON.
+    Extrae la información del siguiente texto dictado: "{texto}".
+    
+    Devuelve estrictamente un objeto JSON con las siguientes claves:
+    - "cliente": Nombre del cliente (ejemplo: "Pedro").
+    - "tipo": "Cargo" (si lleva/compra productos) o "Abono" (si paga o deja dinero/adelanto).
+    - "detalle": Productos o motivo (ejemplo: "1 sol de pan").
+    - "monto": Número decimal/entero del dinero total (ejemplo: 1.0).
+
+    REGLAS IMPORTANTES:
+    1. Si en el texto dicen números en palabras (ej: "un sol", "dos soles", "cinco soles"), conviértelo estrictamente a número en "monto" (ej: 1, 2, 5).
+    2. Si dice "agregar", "llevo", "compró", el tipo debe ser "Cargo".
+    3. Si dice "dejó", "pagó", "abonó", el tipo debe ser "Abono".
     """
     model = genai.GenerativeModel('gemini-1.5-flash')
-    response = model.generate_content(prompt)
     
-    texto_json = response.text.strip().replace('```json', '').replace('```', '')
-    return json.loads(texto_json)
+    # Usamos response_mime_type para forzar a Gemini a devolver JSON puro sin marcas de markdown
+    response = model.generate_content(
+        prompt,
+        generation_config={"response_mime_type": "application/json"}
+    )
+    return json.loads(response.text)
 
 # 3. INTERFAZ WEB CON STREAMLIT
 st.title("📓 Cuaderno Digital de Fiados")
@@ -55,8 +67,13 @@ if texto_dictado:
         # Procesar el texto con la IA
         datos = procesar_dictado(texto_dictado)
         
-        # Buscar el ID del cliente
-        cliente_nombre = datos['cliente'].lower()
+        # Extraer variables asegurando tipos correctos
+        cliente_nombre = str(datos['cliente']).strip().lower()
+        monto_num = float(datos['monto'])
+        tipo_mov = datos['tipo']
+        detalle_prod = datos['detalle']
+        
+        # Buscar el ID del cliente (coincidencia sin importar mayúsculas/minúsculas)
         if cliente_nombre in df_clientes['nombre'].str.lower().values:
             id_c = int(df_clientes.loc[df_clientes['nombre'].str.lower() == cliente_nombre, 'id_cliente'].values[0])
             fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -66,15 +83,21 @@ if texto_dictado:
                 conn.execute(text("""
                     INSERT INTO movimientos (id_cliente, fecha, tipo, detalle, monto) 
                     VALUES (:id_c, :fecha, :tipo, :detalle, :monto)
-                """), {"id_c": id_c, "fecha": fecha_actual, "tipo": datos['tipo'], "detalle": datos['detalle'], "monto": datos['monto']})
+                """), {
+                    "id_c": id_c, 
+                    "fecha": fecha_actual, 
+                    "tipo": tipo_mov, 
+                    "detalle": detalle_prod, 
+                    "monto": monto_num
+                })
                 
-            st.success(f"✅ {datos['tipo']} de S/ {datos['monto']} registrado a {datos['cliente']}.")
+            st.success(f"✅ {tipo_mov} de S/ {monto_num:.2f} registrado a {datos['cliente']}.")
         else:
             st.error(f"⚠️ No se encontró al cliente '{datos['cliente']}'. Ve a la pestaña '👤 Cliente' para agregarlo.")
+            
     except Exception as e:
-        st.error("⚠️ Hubo un problema al procesar el dictado. Intenta hablar más claro o revisa el error técnico.")
-
-st.divider()
+        # Imprime el error exacto para saber la causa en caso vuelva a fallar
+        st.error(f"⚠️ Error al procesar el dictado: {e}")
 
 # --- PESTAÑAS DE LA APLICACIÓN ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 Venta", "💵 Pago", "💰 Cuentas", "📄 Detalle/Excel", "👤 Cliente"])
